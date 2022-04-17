@@ -1,6 +1,8 @@
 # startup_namer
 
 A new Flutter project.
+//Created by Vikas on 17th April, 2022
+//This is my first flutter project
 
 ## Getting Started
 
