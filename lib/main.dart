@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'sql_helper.dart';
+import 'package:intl/intl.dart';
 
 void main() {
   runApp(const MyApp());
@@ -32,6 +33,27 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> _journals = [];
   bool _isLoading = true;
+  DateTime selectedDate = DateTime.now();
+
+  void _selectDate(){
+    showDatePicker(
+      context: context,
+      initialDate: selectedDate,
+      firstDate: DateTime(1950),
+      lastDate: DateTime.now(),
+    ).then((pickedDate) {
+      if (pickedDate == null) {
+        return;
+      }
+
+      setState(() {
+        selectedDate = pickedDate;
+        print("selected date : " + selectedDate.toString().substring(0,10));
+        _dateController.text = "${selectedDate.toLocal()}".split(' ')[0];
+        // _dateController.text = selectedDate.toString().substring(0,10);
+      });
+    });
+  }
 
   void _refreshJournals() async {
     final data = await SQLHelper.getItems();
@@ -49,13 +71,18 @@ class _HomePageState extends State<HomePage> {
 
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _roleController = TextEditingController();
+  final TextEditingController _dateController = TextEditingController();
 
   void _showForm(int? id) async {
     if (id != null) {
-      final existingJournal =
-          _journals.firstWhere((element) => element['emp_id'] == id);
+      final existingJournal = _journals.firstWhere((element) => element['emp_id'] == id);
       _nameController.text = existingJournal['name'];
       _roleController.text = existingJournal['role'];
+      print("Date set to text view : " + existingJournal['date']);
+      // final DateTime date = DateTime.fromMillisecondsSinceEpoch(int.parse(existingJournal['date']));
+      // final DateFormat formatter = DateFormat('yyyy-MM-dd');
+      // final String formatted = formatter.format(date);
+      _dateController.text = existingJournal['date'];
     }
 
     showModalBottomSheet(
@@ -88,26 +115,45 @@ class _HomePageState extends State<HomePage> {
                   const SizedBox(
                     height: 20,
                   ),
+                  Column(
+                    mainAxisSize: MainAxisSize.max,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      TextField(
+                        controller: _dateController,
+                        decoration: const InputDecoration(hintText: 'Date'),
+                      ),
+                      const SizedBox(
+                        height: 20.0,
+                      ),
+                      RaisedButton(
+                        onPressed: () => _selectDate(),
+                        child: Text('Select date'),
+                      ),
+                    ],
+                  ),
                   ElevatedButton(
-                    onPressed: () async {
-                      // Save new journal
-                      if (id == null) {
-                        await _addItem();
-                      }
+                      onPressed: () async {
+                        // Save new journal
+                        if (id == null) {
+                          await _addItem();
+                        }
 
-                      if (id != null) {
-                        await _updateItem(id);
-                      }
+                        if (id != null) {
+                          await _updateItem(id);
+                        }
 
-                      // Clear the text fields
-                      _nameController.text = '';
-                      _roleController.text = '';
+                        // Clear the text fields
+                        _nameController.text = '';
+                        _roleController.text = '';
+                        _dateController.text = '';
 
-                      // Close the bottom sheet
-                      Navigator.of(context).pop();
-                    },
-                    child: Text(id == null ? 'Create New' : 'Update'),
-                  )
+                        // Close the bottom sheet
+                        Navigator.of(context).pop();
+                      },
+                      child: Center(
+                        child: Text(id == null ? 'Create New' : 'Update'),
+                      ))
                 ],
               ),
             ));
@@ -115,13 +161,13 @@ class _HomePageState extends State<HomePage> {
 
 // Insert a new journal to the database
   Future<void> _addItem() async {
-    await SQLHelper.createItem(_nameController.text, _roleController.text);
+    await SQLHelper.createItem(_nameController.text, _roleController.text, _dateController.text);
     _refreshJournals();
   }
 
   // Update an existing journal
   Future<void> _updateItem(int id) async {
-    await SQLHelper.updateItem(id, _nameController.text, _roleController.text);
+    await SQLHelper.updateItem(id, _nameController.text, _roleController.text, _dateController.text);
     _refreshJournals();
   }
 
@@ -129,7 +175,7 @@ class _HomePageState extends State<HomePage> {
   void _deleteItem(int id) async {
     await SQLHelper.deleteItem(id);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text('Successfully deleted a journal!'),
+      content: Text('Successfully deleted an employee!'),
     ));
     _refreshJournals();
   }
@@ -177,4 +223,5 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+
 }
