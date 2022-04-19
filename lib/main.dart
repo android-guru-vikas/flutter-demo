@@ -1,8 +1,14 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
-import 'sql_helper.dart';
+import 'firebase_options.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   runApp(const MyApp());
 }
 
@@ -30,35 +36,43 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  List<Map<String, dynamic>> _journals = [];
-  bool _isLoading = true;
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _roleController = TextEditingController();
+  final TextEditingController _dateController = TextEditingController();
 
-  void _refreshJournals() async {
-    final data = await SQLHelper.getItems();
-    setState(() {
-      _journals = data;
-      _isLoading = false;
+  DateTime selectedDate = DateTime.now();
+
+  void _selectDate() {
+    showDatePicker(
+      context: context,
+      initialDate: selectedDate,
+      firstDate: DateTime(1950),
+      lastDate: DateTime.now(),
+    ).then((pickedDate) {
+      if (pickedDate == null) {
+        return;
+      }
+
+      setState(() {
+        selectedDate = pickedDate;
+        _dateController.text = "${selectedDate.toLocal()}".split(' ')[0];
+      });
     });
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _refreshJournals(); // Loading the diary when the app starts
-  }
+  final CollectionReference _employees =
+      FirebaseFirestore.instance.collection('employees');
 
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _roleController = TextEditingController();
-
-  void _showForm(int? id) async {
-    if (id != null) {
-      final existingJournal =
-          _journals.firstWhere((element) => element['emp_id'] == id);
-      _nameController.text = existingJournal['name'];
-      _roleController.text = existingJournal['role'];
+  Future<void> _createOrUpdate([DocumentSnapshot? documentSnapshot]) async {
+    String action = 'create';
+    if (documentSnapshot != null) {
+      action = 'update';
+      _nameController.text = documentSnapshot['name'];
+      _roleController.text = documentSnapshot['role'].toString();
+      _dateController.text = documentSnapshot['date'].toString();
     }
 
-    showModalBottomSheet(
+    await showModalBottomSheet(
         context: context,
         elevation: 5,
         isScrollControlled: true,
@@ -68,7 +82,7 @@ class _HomePageState extends State<HomePage> {
                 left: 15,
                 right: 15,
                 // this will prevent the soft keyboard from covering the text fields
-                bottom: MediaQuery.of(context).viewInsets.bottom + 120,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 20,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -88,50 +102,60 @@ class _HomePageState extends State<HomePage> {
                   const SizedBox(
                     height: 20,
                   ),
+                  Column(
+                    mainAxisSize: MainAxisSize.max,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      TextField(
+                        controller: _dateController,
+                        decoration:
+                            const InputDecoration(hintText: 'Date of Joining'),
+                        onTap: () => _selectDate(),
+                      ),
+                    ],
+                  ),
                   ElevatedButton(
                     onPressed: () async {
-                      // Save new journal
-                      if (id == null) {
-                        await _addItem();
+                      // Save new record
+                      final String? name = _nameController.text;
+                      final String? price = _roleController.text;
+                      final String? date = _dateController.text;
+                      if (name != null && price != null) {
+                        if (action == 'create') {
+                          // Persist a new employee to Firestore
+                          await _employees
+                              .add({"name": name, "role": price, "date": date});
+                        }
+
+                        if (action == 'update') {
+                          // Update the employee
+                          await _employees.doc(documentSnapshot!.id).update(
+                              {"name": name, "role": price, "date": date});
+                        }
+
+                        // Clear the text fields
+                        _nameController.text = '';
+                        _roleController.text = '';
+                        _dateController.text = '';
+
+                        // Hide the bottom sheet
+                        Navigator.of(context).pop();
                       }
-
-                      if (id != null) {
-                        await _updateItem(id);
-                      }
-
-                      // Clear the text fields
-                      _nameController.text = '';
-                      _roleController.text = '';
-
-                      // Close the bottom sheet
-                      Navigator.of(context).pop();
                     },
-                    child: Text(id == null ? 'Create New' : 'Update'),
+                    child: Center( child:Text(action == 'create' ? 'Create' : 'Update')),
                   )
                 ],
               ),
             ));
   }
 
-// Insert a new journal to the database
-  Future<void> _addItem() async {
-    await SQLHelper.createItem(_nameController.text, _roleController.text);
-    _refreshJournals();
-  }
+  // Deleting an employee by id
+  Future<void> _deleteEmployee(String employeeId) async {
+    await _employees.doc(employeeId).delete();
 
-  // Update an existing journal
-  Future<void> _updateItem(int id) async {
-    await SQLHelper.updateItem(id, _nameController.text, _roleController.text);
-    _refreshJournals();
-  }
-
-  // Delete an item
-  void _deleteItem(int id) async {
-    await SQLHelper.deleteItem(id);
+    // Show a snackbar
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text('Successfully deleted a journal!'),
-    ));
-    _refreshJournals();
+        content: Text('You have successfully deleted an employee')));
   }
 
   @override
@@ -140,40 +164,51 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('Employee Tracker(Glib)'),
       ),
-      body: _isLoading
-          ? const Center(
-              child: CircularProgressIndicator(),
-            )
-          : ListView.builder(
-              itemCount: _journals.length,
-              itemBuilder: (context, index) => Card(
-                color: Colors.orange[200],
-                margin: const EdgeInsets.all(15),
-                child: ListTile(
-                    title: Text(_journals[index]['name']),
-                    subtitle: Text(_journals[index]['role']),
+      body: StreamBuilder(
+        stream: _employees.snapshots(),
+        builder: (context, AsyncSnapshot<QuerySnapshot> streamSnapshot) {
+          if (streamSnapshot.hasData) {
+            return ListView.builder(
+              itemCount: streamSnapshot.data!.docs.length,
+              itemBuilder: (context, index) {
+                final DocumentSnapshot documentSnapshot =
+                    streamSnapshot.data!.docs[index];
+                return Card(
+                  margin: const EdgeInsets.all(10),
+                  child: ListTile(
+                    title: Text(documentSnapshot['name']),
+                    subtitle: Text(documentSnapshot['role'].toString()),
                     trailing: SizedBox(
                       width: 100,
                       child: Row(
                         children: [
+                          // Press this button to edit a single employee
                           IconButton(
-                            icon: const Icon(Icons.edit),
-                            onPressed: () =>
-                                _showForm(_journals[index]['emp_id']),
-                          ),
+                              icon: const Icon(Icons.edit),
+                              onPressed: () =>
+                                  _createOrUpdate(documentSnapshot)),
+                          // This icon button is used to delete a single employee
                           IconButton(
-                            icon: const Icon(Icons.delete),
-                            onPressed: () =>
-                                _deleteItem(_journals[index]['emp_id']),
-                          ),
+                              icon: const Icon(Icons.delete),
+                              onPressed: () =>
+                                  _deleteEmployee(documentSnapshot.id)),
                         ],
                       ),
-                    )),
-              ),
-            ),
+                    ),
+                  ),
+                );
+              },
+            );
+          }
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
+        },
+      ),
+      // Add new employee
       floatingActionButton: FloatingActionButton(
+        onPressed: () => _createOrUpdate(),
         child: const Icon(Icons.add),
-        onPressed: () => _showForm(null),
       ),
     );
   }
